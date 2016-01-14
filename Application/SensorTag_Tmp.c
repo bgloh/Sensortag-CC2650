@@ -145,7 +145,7 @@ static sensorCBs_t sensorCallbacks =
 void SensorTagTmp_createTask(void)
 {
   Task_Params taskParames;
- uint8_t test;
+ //uint8_t test;
   // Create the task for the state machine
   Task_Params_init(&taskParames);
   taskParames.stack = sensorTaskStack;
