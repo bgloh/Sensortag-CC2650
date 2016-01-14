@@ -1165,6 +1165,7 @@ void sensorTag_updateAdvertisingData(uint8_t keyStatus)
    uint8_t SetPeriod=128;
    uint8_t HumON=1;
    uint16_t rawTemp,rawHum;
+   uint8_t test100;
    float temp,hum;
 
    // humidity sensor
