@@ -66,7 +66,6 @@
 
 #include "bsp_i2c.h"
 #include "bsp_spi.h"
-#include "sensor_hdc1000.h"
 
 #include "SensorTag_Revision.h"
 #include "sensor.h"
@@ -109,7 +108,8 @@
  */
 
 // How often to perform periodic event (in msec)
-#define ST_PERIODIC_EVT_PERIOD               1000
+#define ST_PERIODIC_EVT_PERIOD                       1000
+#define ST_USER_DEFINED_PERIODIC_EVT_PERIOD	         1000
 
 // What is the advertising interval when device is discoverable
 // (units of 625us, 160=100ms)
@@ -160,6 +160,7 @@
 #define ST_STATE_CHANGE_EVT                   0x0001
 #define ST_CHAR_CHANGE_EVT                    0x0002
 #define ST_PERIODIC_EVT                       0x0004
+#define ST_USER_DEFINED_PERIODIC_EVT		  0x0010   // user-defined event
 #ifdef FEATURE_OAD
 #define SBP_OAD_WRITE_EVT                     0x0008
 #endif //FEATURE_OAD
@@ -167,13 +168,9 @@
 // Misc.
 #define INVALID_CONNHANDLE                    0xFFFF
 #define TEST_INDICATION_BLINKS                5  // Number of blinks
-#define BLINK_DURATION                        20 // Milliseconds
+#define BLINK_DURATION                        5 // Milliseconds
 #define OAD_PACKET_SIZE                       18
 #define KEY_STATE_OFFSET                      13 // Offset in advertising data
-
-//MY CODE
-static char k =11;
-
 
 /*******************************************************************************
  * TYPEDEFS
@@ -213,6 +210,7 @@ static ICall_EntityID selfEntity;
 
 // Clock instances for internal periodic events.
 static Clock_Struct periodicClock;
+static Clock_Struct UserDefined_periodicClock;  // user-defined periodic clock
 
 // Queue object used for app messages
 static Queue_Struct appMsg;
@@ -268,14 +266,15 @@ static uint8_t advertData[] =
 #endif
 
   // Manufacturer specific advertising data
-  0x07,
+  0x08,
   GAP_ADTYPE_MANUFACTURER_SPECIFIC,
   LO_UINT16(TI_COMPANY_ID),
   HI_UINT16(TI_COMPANY_ID),
   TI_ST_DEVICE_ID,
   TI_ST_KEY_DATA_ID,
   0x00,                                    // Key state
-  0x1f  // my data
+  0xFF,									   // MY DATA1
+  0xFE                                     // MY DATA2
 };
 
 // GAP GATT Attributes
@@ -423,6 +422,9 @@ static void SensorTag_init(void)
   // Create one-shot clocks for internal periodic events.
   Util_constructClock(&periodicClock, SensorTag_clockHandler,
                       ST_PERIODIC_EVT_PERIOD, 0, false, ST_PERIODIC_EVT);
+  // Create periodic clocks for internal periodic events
+  Util_constructClock(&UserDefined_periodicClock, SensorTag_clockHandler,
+                       ST_USER_DEFINED_PERIODIC_EVT_PERIOD, ST_USER_DEFINED_PERIODIC_EVT_PERIOD, false, ST_USER_DEFINED_PERIODIC_EVT);
 
   // Setup the GAP
   GAP_SetParamValue(TGAP_CONN_PAUSE_PERIPHERAL, DEFAULT_CONN_PAUSE_PERIPHERAL);
@@ -560,6 +562,11 @@ static void SensorTag_taskFxn(UArg a0, UArg a1)
   // Initialize application
   SensorTag_init();
 
+  // Start a user-defined clock
+  Util_startClock(&UserDefined_periodicClock);
+
+  // dummy variable for data advertising
+  uint8_t dummy;
   // Application main loop
   for (;;)
   {
@@ -629,13 +636,18 @@ static void SensorTag_taskFxn(UArg a0, UArg a1)
       // Blink green LED when advertising
       if (gapProfileState == GAPROLE_ADVERTISING)
       {
-        SensorTag_blinkLed(Board_LED2,1);
-        sensorTag_updateAdvertisingData(0);
+    	//SensorTag_blinkLed(Board_LED2,1);	 // blink greed LED
+        //MysensorTag_updateAdvertisingData(); // advertise sensor reading
 
         #ifdef FEATURE_LCD
         SensorTag_displayBatteryVoltage();
         #endif
       }
+    }
+    else if(events & ST_USER_DEFINED_PERIODIC_EVT)
+    {
+    	events &= ~ST_USER_DEFINED_PERIODIC_EVT;
+    	SensorTag_blinkLed(Board_LED1,1);
     }
 
     #ifdef FEATURE_OAD
@@ -660,6 +672,8 @@ static void SensorTag_taskFxn(UArg a0, UArg a1)
       ICall_free(oadWriteEvt);
     }
     #endif //FEATURE_OAD
+
+
   } // task loop
 }
 
@@ -1157,43 +1171,42 @@ static void SensorTag_callback(PIN_Handle handle, PIN_Id pinId)
 void sensorTag_updateAdvertisingData(uint8_t keyStatus)
 {
   // Record key state in advertising data
-   bStatus_t ret;
-   uint32_t newValue;
-   uint8_t buf[4];
-   uint8_t Getperiod;
-   uint8_t period,config;
-   uint8_t SetPeriod=128;
-   uint8_t HumON=1;
-   uint16_t rawTemp,rawHum;
-  // uint8_t test100;
-  // uint8_t test101;
-   uint8_t test102;
-   float temp,hum;
-
-   // humidity sensor
-   // 1. Start temperature measurement
-   //      sensorHdc1000Start();
-   //      delay_ms(100);
-   // 2. Read and convert data
-    //     sensorHdc1000Read(&rawTemp, &rawHum);
-     //    sensorHdc1000Convert(rawTemp, rawHum, &temp,&hum);
-
- // advertData[KEY_STATE_OFFSET] = keyStatus;
-	k=k+1;
-	Humidity_setParameter(SENSOR_CONF,1,&HumON);
-	//Humidity_setParameter(SENSOR_PERI,1,&SetPeriod);
-	//Humidity_getParameter(SENSOR_PERI, &Getperiod);
-	ret = Humidity_getParameter(SENSOR_DATA, buf);
-	//ret = Humidity_getParameter(SENSOR_PERI, &period);
-	//ret = Humidity_getParameter(SENSOR_CONF, &config);
-	rawTemp = buf[0];
-	rawHum = buf[2];
-	sensorHdc1000Convert(rawTemp, rawHum, &temp,&hum);
-	if(!ret) {
-	advertData[KEY_STATE_OFFSET+1] = buf[1];
-    GAPRole_SetParameter(GAPROLE_ADVERT_DATA, sizeof(advertData), advertData);
-	}
+  advertData[KEY_STATE_OFFSET] = keyStatus;
+  GAPRole_SetParameter(GAPROLE_ADVERT_DATA, sizeof(advertData), advertData);
 }
+
+
+void MysensorTag_updateAdvertisingData(void)
+{
+
+ uint16_t RawTemperature, RawHumidity;
+ bStatus_t st1,st2,st3, st4;
+ uint8_t period, config, HumiditySensorON=1;
+ uint8_t HumRawData[4]; // humidity sensor raw data
+ float temperature,humidity; // temperature and humidity measurements in Celcius and %
+
+// set parameter
+ st1 =  Humidity_setParameter(SENSOR_CONF,1,&HumiditySensorON); // turn on
+ //SensorTagHum_processCharChangeEvt(SENSOR_CONF); // enable humidity sensing
+ // SensorTag_enqueueMsg(ST_CHAR_CHANGE_EVT, SERVICE_ID_HUM, SENOSR_CONF);
+
+
+ // get parameter
+ st2 =  Humidity_getParameter(SENSOR_PERI, &period);
+ st3 =  Humidity_getParameter(SENSOR_CONF, &config);
+ st4 =  Humidity_getParameter(SENSOR_DATA, &HumRawData);
+
+ // raw temperature and humidity
+ RawTemperature = HumRawData[0] | (HumRawData[1]<<8);
+ RawHumidity = HumRawData[2] | (HumRawData[3]<<8);
+ sensorHdc1000Convert(RawTemperature, RawHumidity,&temperature, &humidity);
+
+ // update advertisement data
+ advertData[KEY_STATE_OFFSET+1] = (uint8_t)temperature;
+ advertData[KEY_STATE_OFFSET+2] = (uint8_t)humidity;
+ GAPRole_SetParameter(GAPROLE_ADVERT_DATA, sizeof(advertData), advertData);
+}
+
 
 
 #ifdef FACTORY_IMAGE
